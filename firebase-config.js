@@ -8,16 +8,6 @@ const firebaseConfig = {
   measurementId: "G-PYB715Q4YY"
 };
 
-// Initialize Firebase
-firebase.initializeApp(firebaseConfig);
-
-// Initialize services
-const auth = firebase.auth();
-const db = firebase.firestore();
-const analytics = firebase.analytics();
-
-// Export for use in other modules
-window.firebaseConfig = firebaseConfig;
-window.auth = auth;
-window.db = db;
-window.analytics = analytics;
+const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const db = getFirestore(app);
