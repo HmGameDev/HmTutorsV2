@@ -1,4 +1,4 @@
-// app.js - Main application logic
+// app.js - Fixed version with missing functions
 let currentUser = null;
 let currentUserRole = null;
 let currentUserData = null;
@@ -98,12 +98,28 @@ function setupAuthForms() {
         const email = document.getElementById('loginEmail').value;
         const password = document.getElementById('loginPassword').value;
         
-        const result = await window.authService.login(email, password);
+        // Show loading state
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const originalText = submitBtn.textContent;
+        submitBtn.textContent = 'Logging in...';
+        submitBtn.disabled = true;
         
-        if (result.success) {
-            showAuthMessage('Login successful!', 'success');
-        } else {
-            showAuthMessage(result.error, 'error');
+        try {
+            const result = await window.authService.login(email, password);
+            
+            if (result.success) {
+                showAuthMessage('Login successful!', 'success');
+                // The auth state change will handle the UI update
+            } else {
+                showAuthMessage(result.error, 'error');
+            }
+        } catch (error) {
+            console.error('Login error:', error);
+            showAuthMessage('An unexpected error occurred. Please try again.', 'error');
+        } finally {
+            // Restore button state
+            submitBtn.textContent = originalText;
+            submitBtn.disabled = false;
         }
     });
 
@@ -122,13 +138,39 @@ function setupAuthForms() {
             subject: document.getElementById('regSubject').value
         };
         
-        const result = await window.authService.register(userData);
+        // Validate required fields
+        if (!userData.firstName || !userData.lastName || !userData.email || !userData.password || !userData.role) {
+            showAuthMessage('Please fill in all required fields.', 'error');
+            return;
+        }
         
-        if (result.success) {
-            showAuthMessage('Account created successfully!', 'success');
-            toggleAuthMode('login');
-        } else {
-            showAuthMessage(result.error, 'error');
+        // Show loading state
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const originalText = submitBtn.textContent;
+        submitBtn.textContent = 'Creating Account...';
+        submitBtn.disabled = true;
+        
+        try {
+            const result = await window.authService.register(userData);
+            
+            if (result.success) {
+                showAuthMessage('Account created successfully!', 'success');
+                // Clear form
+                document.getElementById('registerForm').reset();
+                // Switch to login tab after a short delay
+                setTimeout(() => {
+                    toggleAuthMode('login');
+                }, 2000);
+            } else {
+                showAuthMessage(result.error, 'error');
+            }
+        } catch (error) {
+            console.error('Registration error:', error);
+            showAuthMessage('An unexpected error occurred. Please try again.', 'error');
+        } finally {
+            // Restore button state
+            submitBtn.textContent = originalText;
+            submitBtn.disabled = false;
         }
     });
 }
@@ -162,12 +204,20 @@ function showSection(sectionName) {
     sections.forEach(section => section.classList.remove('active'));
     
     // Show selected section
-    document.getElementById(sectionName).classList.add('active');
+    const targetSection = document.getElementById(sectionName);
+    if (targetSection) {
+        targetSection.classList.add('active');
+    }
     
-    // Update navigation
+    // Update navigation - Fixed the event reference issue
     const navLinks = document.querySelectorAll('.nav-links a');
     navLinks.forEach(link => link.classList.remove('active'));
-    event.target.classList.add('active');
+    
+    // Find and activate the clicked link
+    const clickedLink = document.querySelector(`[onclick="showSection('${sectionName}')"]`);
+    if (clickedLink) {
+        clickedLink.classList.add('active');
+    }
     
     // Load section-specific content
     if (sectionName === 'dashboard') {
@@ -178,18 +228,24 @@ function showSection(sectionName) {
 }
 
 async function logout() {
-    const result = await window.authService.logout();
-    if (result.success) {
-        currentUser = null;
-        currentUserRole = null;
-        currentUserData = null;
-        
-        if (sessionsUnsubscribe) {
-            sessionsUnsubscribe();
-            sessionsUnsubscribe = null;
+    try {
+        const result = await window.authService.logout();
+        if (result.success) {
+            currentUser = null;
+            currentUserRole = null;
+            currentUserData = null;
+            
+            if (sessionsUnsubscribe) {
+                sessionsUnsubscribe();
+                sessionsUnsubscribe = null;
+            }
+            
+            showAuthSection();
+        } else {
+            console.error('Logout failed:', result.error);
         }
-        
-        showAuthSection();
+    } catch (error) {
+        console.error('Logout error:', error);
     }
 }
 
@@ -218,32 +274,102 @@ async function loadDashboard() {
 async function loadUserSessions() {
     if (!currentUser) return;
     
-    const result = await window.sessionService.getUserSessions(currentUser.uid, currentUserRole);
     const container = document.getElementById('sessionsContainer');
     
-    if (result.success) {
-        if (result.sessions.length === 0) {
-            container.innerHTML = '<p style="color: #666; text-align: center;">No sessions found.</p>';
+    // Check if sessionService exists
+    if (!window.sessionService) {
+        container.innerHTML = '<p style="color: #666; text-align: center;">Session service not available.</p>';
+        return;
+    }
+    
+    try {
+        const result = await window.sessionService.getUserSessions(currentUser.uid, currentUserRole);
+        
+        if (result.success) {
+            if (result.sessions.length === 0) {
+                container.innerHTML = '<p style="color: #666; text-align: center;">No sessions found.</p>';
+            } else {
+                container.innerHTML = result.sessions.map(session => `
+                    <div class="session-card" onclick="showSessionDetails('${session.id}')">
+                        <div class="session-header">
+                            <div class="session-date">${session.date}</div>
+                            <div class="session-type">${session.sessionType}</div>
+                        </div>
+                        <div class="session-preview">
+                            ${currentUserRole === 'teacher' ? `Student: ${session.studentName}` : ''}
+                            <br>Notes: ${session.notes.substring(0, 100)}${session.notes.length > 100 ? '...' : ''}
+                        </div>
+                    </div>
+                `).join('');
+            }
         } else {
-            container.innerHTML = result.sessions.map(session => `
-                <div class="session-card" onclick="showSessionDetails('${session.id}')">
-                    <div class="session-header">
-                        <div class="session-date">${session.date}</div>
-                        <div class="session-type">${session.sessionType}</div>
-                    </div>
-                    <div class="session-preview">
-                        ${currentUserRole === 'teacher' ? `Student: ${session.studentName}` : ''}
-                        <br>Notes: ${session.notes.substring(0, 100)}${session.notes.length > 100 ? '...' : ''}
-                    </div>
-                </div>
-            `).join('');
+            container.innerHTML = '<p style="color: #ff6b6b;">Error loading sessions.</p>';
         }
-    } else {
+    } catch (error) {
+        console.error('Error loading sessions:', error);
         container.innerHTML = '<p style="color: #ff6b6b;">Error loading sessions.</p>';
     }
 }
 
-// Signup form
+// Admin panel function
+async function loadAdminPanel() {
+    if (currentUserRole !== 'teacher') return;
+    
+    const adminContent = document.getElementById('admin');
+    if (!adminContent) return;
+    
+    adminContent.innerHTML = `
+        <div class="admin-panel">
+            <h2>Admin Panel</h2>
+            <div id="adminContent">Loading...</div>
+        </div>
+    `;
+    
+    try {
+        const result = await window.authService.getAllStudents();
+        const adminContentDiv = document.getElementById('adminContent');
+        
+        if (result.success) {
+            if (result.students.length === 0) {
+                adminContentDiv.innerHTML = '<p>No students registered yet.</p>';
+            } else {
+                adminContentDiv.innerHTML = `
+                    <div class="student-list">
+                        ${result.students.map(student => `
+                            <div class="student-card">
+                                <div class="student-info">
+                                    <div class="info-item">
+                                        <span class="info-label">Name</span>
+                                        <span class="info-value">${student.firstName} ${student.lastName}</span>
+                                    </div>
+                                    <div class="info-item">
+                                        <span class="info-label">Email</span>
+                                        <span class="info-value">${student.email}</span>
+                                    </div>
+                                    <div class="info-item">
+                                        <span class="info-label">Grade</span>
+                                        <span class="info-value">${student.grade || 'Not specified'}</span>
+                                    </div>
+                                    <div class="info-item">
+                                        <span class="info-label">Subject</span>
+                                        <span class="info-value">${student.subject || 'Not specified'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+        } else {
+            adminContentDiv.innerHTML = '<p style="color: #ff6b6b;">Error loading students.</p>';
+        }
+    } catch (error) {
+        console.error('Error loading admin panel:', error);
+        document.getElementById('adminContent').innerHTML = '<p style="color: #ff6b6b;">Error loading admin panel.</p>';
+    }
+}
+
+// Signup form (for the public signup page)
 function setupSignupForm() {
     const signupForm = document.getElementById('signupForm');
     if (signupForm) {
@@ -264,12 +390,23 @@ function setupSignupForm() {
                 experience: formData.get('experience')
             };
             
-            const result = await window.dbService.addStudent(studentData);
+            // Check if dbService exists
+            if (!window.dbService) {
+                showMessage('Database service not available. Please try again later.', 'error');
+                return;
+            }
             
-            if (result.success) {
-                showMessage('Application submitted successfully! We\'ll be in touch soon.', 'success');
-                signupForm.reset();
-            } else {
+            try {
+                const result = await window.dbService.addStudent(studentData);
+                
+                if (result.success) {
+                    showMessage('Application submitted successfully! We\'ll be in touch soon.', 'success');
+                    signupForm.reset();
+                } else {
+                    showMessage('Error submitting application. Please try again.', 'error');
+                }
+            } catch (error) {
+                console.error('Signup form error:', error);
                 showMessage('Error submitting application. Please try again.', 'error');
             }
         });
@@ -286,9 +423,9 @@ function setupCalendar() {
 }
 
 function renderCalendar(date) {
-    // Calendar rendering logic would go here
-    // For brevity, I'll provide a simplified version
     const calendarContainer = document.querySelector('.calendar-container');
+    if (!calendarContainer) return;
+    
     calendarContainer.innerHTML = `
         <h3>Calendar</h3>
         <div class="calendar">
@@ -297,8 +434,16 @@ function renderCalendar(date) {
                 <h4>${date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h4>
                 <button class="calendar-nav" onclick="nextMonth()">&gt;</button>
             </div>
+            <div class="calendar-weekdays">
+                <div class="calendar-weekday">Sun</div>
+                <div class="calendar-weekday">Mon</div>
+                <div class="calendar-weekday">Tue</div>
+                <div class="calendar-weekday">Wed</div>
+                <div class="calendar-weekday">Thu</div>
+                <div class="calendar-weekday">Fri</div>
+                <div class="calendar-weekday">Sat</div>
+            </div>
             <div class="calendar-grid">
-                <!-- Calendar days would be rendered here -->
                 <div class="calendar-day today" onclick="showNotesModal('${date.toISOString().split('T')[0]}')">
                     ${date.getDate()}
                 </div>
@@ -307,17 +452,55 @@ function renderCalendar(date) {
     `;
 }
 
+// Calendar navigation functions
+let currentCalendarDate = new Date();
+
+function previousMonth() {
+    currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
+    renderCalendar(currentCalendarDate);
+}
+
+function nextMonth() {
+    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
+    renderCalendar(currentCalendarDate);
+}
+
+// Placeholder functions for missing functionality
+function showAddSessionModal() {
+    alert('Add Session functionality will be implemented soon!');
+}
+
+function showSessionDetails(sessionId) {
+    alert(`Session details for ${sessionId} will be implemented soon!`);
+}
+
+function showNotesModal(date) {
+    alert(`Notes modal for ${date} will be implemented soon!`);
+}
+
 // Utility functions
 function showMessage(message, type) {
     // Create and show message
     const messageDiv = document.createElement('div');
     messageDiv.className = type === 'success' ? 'success-message' : 'error-message';
     messageDiv.textContent = message;
-    messageDiv.style.display = 'block';
+    messageDiv.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 1rem 2rem;
+        border-radius: 5px;
+        color: white;
+        font-weight: 500;
+        z-index: 10000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    `;
     
     document.body.appendChild(messageDiv);
     
     setTimeout(() => {
-        document.body.removeChild(messageDiv);
+        if (document.body.contains(messageDiv)) {
+            document.body.removeChild(messageDiv);
+        }
     }, 5000);
 }

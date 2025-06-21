@@ -1,5 +1,10 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+
+
 const firebaseConfig = {
-  apiKey: "AIzaSyA_tZjHXi9RbvwDIbIz-GCDQV-qzcq3M",
+  apiKey: "AIzaSyA_tZjHvXi9RbvwDIbbIz-GCDOV-qzcq3M",
   authDomain: "hm-tutoring-8d2b5.firebaseapp.com",
   projectId: "hm-tutoring-8d2b5",
   storageBucket: "hm-tutoring-8d2b5.firebasestorage.app",

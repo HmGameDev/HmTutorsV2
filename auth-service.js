@@ -1,64 +1,128 @@
-// auth-service.js
+// auth-service.js - Fixed version
 class AuthService {
   constructor() {
-    this.auth = window.auth;
-    this.db = window.db;
+    // Check if Firebase is properly initialized
+    if (!window.firebase) {
+      console.error('Firebase not loaded! Make sure Firebase scripts are loaded before auth-service.js');
+      return;
+    }
+    
+    this.auth = firebase.auth();
+    this.db = firebase.firestore();
     this.currentUser = null;
     this.userRole = null;
+    this.userData = null;
     this.TEACHER_PASSWORD = "HumzahMohsin";
     
+    // Callback for auth state changes
+    this.authStateCallback = null;
+    
+    // Test Firestore connection
+    this.testFirestoreConnection();
+    
     // Listen for auth state changes
-    this.auth.onAuthStateChanged((user) => {
+    this.auth.onAuthStateChanged(async (user) => {
+      console.log('Auth state changed:', user ? user.email : 'No user');
       this.currentUser = user;
+      
       if (user) {
-        this.loadUserRole();
+        // Load user data and role
+        const userData = await this.loadUserRole();
+        this.userData = userData;
+        
+        // Notify the app about auth state change
+        if (this.authStateCallback) {
+          this.authStateCallback(user, this.userRole, this.userData);
+        }
       } else {
         this.userRole = null;
+        this.userData = null;
+        
+        // Notify the app about auth state change
+        if (this.authStateCallback) {
+          this.authStateCallback(null, null, null);
+        }
       }
     });
   }
 
-  // Sign up new user
-  async signUp(email, password, userData, isTeacher = false, teacherPassword = null) {
+  // Set up auth state change listener
+  onAuthStateChanged(callback) {
+    this.authStateCallback = callback;
+  }
+
+  // Test if Firestore is working
+  async testFirestoreConnection() {
     try {
+      console.log('Testing Firestore connection...');
+      const testDoc = await this.db.collection('test').doc('connection').get();
+      console.log('Firestore connection successful');
+    } catch (error) {
+      console.error('Firestore connection failed:', error);
+    }
+  }
+
+  // Register new user - Updated to match your app.js expectations
+  async register(userData) {
+    try {
+      console.log('Starting registration process for:', userData.email);
+      
+      const isTeacher = userData.role === 'teacher';
+      
       // Validate teacher password if signing up as teacher
-      if (isTeacher && teacherPassword !== this.TEACHER_PASSWORD) {
-        throw new Error('Invalid teacher password');
+      if (isTeacher && userData.teacherPassword !== this.TEACHER_PASSWORD) {
+        throw new Error('Invalid teacher verification code');
       }
 
+      console.log('Creating auth user...');
       // Create auth user
-      const userCredential = await this.auth.createUserWithEmailAndPassword(email, password);
+      const userCredential = await this.auth.createUserWithEmailAndPassword(userData.email, userData.password);
       const user = userCredential.user;
+      console.log('Auth user created:', user.uid);
 
       // Create user document in Firestore
       const userDoc = {
         uid: user.uid,
-        email: email,
+        email: userData.email,
         firstName: userData.firstName,
         lastName: userData.lastName,
-        role: isTeacher ? 'teacher' : 'student',
+        role: userData.role,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         lastLogin: firebase.firestore.FieldValue.serverTimestamp()
       };
 
       // Add student-specific fields if student
       if (!isTeacher) {
-        userDoc.grade = userData.grade;
-        userDoc.subjects = userData.subjects || [];
+        userDoc.grade = userData.grade || '';
+        userDoc.subject = userData.subject || '';
       }
 
+      console.log('Saving user document to Firestore...', userDoc);
+      
+      // Save to Firestore
       await this.db.collection('users').doc(user.uid).set(userDoc);
+      
+      console.log('User document saved successfully!');
+
+      // Verify the document was saved
+      const savedDoc = await this.db.collection('users').doc(user.uid).get();
+      if (savedDoc.exists) {
+        console.log('Verification: Document exists in Firestore', savedDoc.data());
+      } else {
+        console.error('Verification failed: Document not found in Firestore');
+      }
 
       return { success: true, user: user, role: userDoc.role };
     } catch (error) {
-      console.error('Error signing up:', error);
+      console.error('Error in register:', error);
       return { success: false, error: error.message };
     }
   }
 
-  // Sign in user
-  async signIn(email, password) {
+  // Login user - Updated to match your app.js expectations
+  async login(email, password) {
     try {
+      console.log('Signing in user:', email);
       const userCredential = await this.auth.signInWithEmailAndPassword(email, password);
       const user = userCredential.user;
 
@@ -67,21 +131,36 @@ class AuthService {
         lastLogin: firebase.firestore.FieldValue.serverTimestamp()
       });
 
-      await this.loadUserRole();
+      // Load user role and data
+      const userData = await this.loadUserRole();
       
-      return { success: true, user: user, role: this.userRole };
+      return { success: true, user: user, role: this.userRole, userData: userData };
     } catch (error) {
       console.error('Error signing in:', error);
-      return { success: false, error: error.message };
+      
+      // Provide more user-friendly error messages
+      let errorMessage = error.message;
+      if (error.code === 'auth/user-not-found') {
+        errorMessage = 'No account found with this email address.';
+      } else if (error.code === 'auth/wrong-password') {
+        errorMessage = 'Incorrect password.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Invalid email address.';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many failed attempts. Please try again later.';
+      }
+      
+      return { success: false, error: errorMessage };
     }
   }
 
-  // Sign out user
-  async signOut() {
+  // Logout user - Updated to match your app.js expectations
+  async logout() {
     try {
       await this.auth.signOut();
       this.currentUser = null;
       this.userRole = null;
+      this.userData = null;
       return { success: true };
     } catch (error) {
       console.error('Error signing out:', error);
@@ -94,11 +173,15 @@ class AuthService {
     if (!this.currentUser) return null;
     
     try {
+      console.log('Loading user role for:', this.currentUser.uid);
       const userDoc = await this.db.collection('users').doc(this.currentUser.uid).get();
       if (userDoc.exists) {
         const userData = userDoc.data();
         this.userRole = userData.role;
+        console.log('User role loaded:', this.userRole);
         return userData;
+      } else {
+        console.error('User document not found in Firestore');
       }
       return null;
     } catch (error) {
